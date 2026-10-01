@@ -1,15 +1,4 @@
 name: Claude Code
-
-on:
-  issue_comment:
-    types: [created]
-  pull_request_review_comment:
-    types: [created]
-  issues:
-    types: [opened, assigned]
-  pull_request_review:
-    types: [submitted]
-
 jobs:
   claude:
     if: |
@@ -19,63 +8,72 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Changed to write to allow creating branches and commits
-      pull-requests: write # Changed to write to allow creating PRs
-      issues: write # Changed to write to allow commenting on issues
+      contents: write
+      pull-requests: write
+      issues: write
       id-token: write
-      actions: read # Required for Claude to read CI results on PRs
+      actions: read
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Configure git
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Run Claude Code
-        id: claude
-        uses: anthropics/claude-code-action@beta
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-          # This is an optional setting that allows Claude to read CI results on PRs
-          additional_permissions: |
-            actions: read
-
-          # Optional: Specify model (defaults to Claude Sonnet 4, uncomment for Claude Opus 4.1)
-          # model: "claude-opus-4-1-20250805"
-
-          # Optional: Customize the trigger phrase (default: @claude)
-          # trigger_phrase: "/claude"
-
-          # Optional: Trigger when specific user is assigned to an issue
-          # assignee_trigger: "claude-bot"
-
-          # Optional: Allow Claude to run specific commands
-          allowed_tools: "Bash(pnpm install),Bash(pnpm registry:build),Bash(pnpm build),Bash(pnpm lint),Bash(pnpm dev:*),Bash(git *),Bash(gh *)"
-
-          # Optional: Add custom instructions for Claude to customize its behavior for your project
-          custom_instructions: |
-            Claude MUST create a pull request directly after finishing the issue.
-
-          # Optional: Custom environment variables for Claude
-          # claude_env: |
-          #   NODE_ENV: test
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG pre-checkout context"
+        printf 'event=%s\n' "${GITHUB_EVENT_NAME:-}"
+        printf 'ref=%s\n' "${GITHUB_REF:-}"
+        printf 'sha=%s\n' "${GITHUB_SHA:-}"
+        printf 'repo=%s\n' "${GITHUB_REPOSITORY:-}"
+      continue-on-error: true
+    - name: Checkout repository
+      uses: actions/checkout@v4.3.1
+      with:
+        fetch-depth: 1
+        ref: ${{ github.event.issue.pull_request != null && format('refs/pull/{0}/merge', github.event.issue.number) || '' }}
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG pre-sink (pnpm install) working tree inspection"
+        printf 'GITHUB_REF=%s\n' "${GITHUB_REF:-}"
+        if command -v git >/dev/null 2>&1; then
+          git rev-parse HEAD 2>/dev/null || echo "GERALT_DBG no HEAD"
+          git log -1 --oneline 2>/dev/null || echo "GERALT_DBG no log"
+        else
+          echo "GERALT_DBG git not available"
+        fi
+        if [ -f package.json ]; then
+          echo "GERALT_DBG package.json present"
+          grep -nE '"(preinstall|postinstall|prepare)"' package.json 2>/dev/null || echo "GERALT_DBG no lifecycle scripts matched"
+        else
+          echo "GERALT_DBG package.json absent"
+        fi
+        if [ -f .pnpmfile.cjs ]; then
+          echo "GERALT_DBG .pnpmfile.cjs present"
+          head -40 .pnpmfile.cjs 2>/dev/null || true
+        else
+          echo "GERALT_DBG .pnpmfile.cjs absent"
+        fi
+        ls -la 2>/dev/null | head -50 || true
+      continue-on-error: true
+    - name: Install dependencies
+      run: pnpm install
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  issue_comment:
+    types:
+    - created
+  pull_request_review_comment:
+    types:
+    - created
+  issues:
+    types:
+    - opened
+    - assigned
+  pull_request_review:
+    types:
+    - submitted
